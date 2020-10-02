@@ -2,23 +2,18 @@
 """
 Created on Fri Sep 25 14:13:06 2020
 
-@author: Hando
+@author: Tom
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 
-
-from pyquil import get_qc
 from pyquil.quil import Program
-from pyquil.gates import RX, RZ, X, CNOT, H, S
-
-from pyquil.paulis import sZ, PauliSum, PauliTerm, commuting_sets
-from pyquil.api import WavefunctionSimulator, QuantumComputer
-
+from pyquil.gates import X, H, S
+from pyquil.paulis import PauliSum, PauliTerm
+from pyquil.api import QuantumComputer
 
 from typing import Union, Optional, List, Dict, Tuple
-import time, warnings
+
 
 
 class TwoQubitMitigator:
@@ -203,6 +198,12 @@ class TwoQubitMitigator:
         gamma_I1=p1_first-p0_first
         gamma_I2=p1_second-p0_second
         
+        # compute the coefficients
+        coeffs=np.array([1/(gamma_Z1*gamma_Z2),
+                         gamma_I1/(gamma_Z1*gamma_Z2),
+                         gamma_I2/(gamma_Z1*gamma_Z2),
+                         (gamma_I1*gamma_I2)/(gamma_Z1*gamma_Z2)])
+        
         # create expectation values and set them to zero
         expectation_value_mitigated=0.
         expectation_value_without=0.
@@ -212,9 +213,27 @@ class TwoQubitMitigator:
         terms=self._terms
         
         for term in terms:
-            result_first_qubit, result_second_qubit=self._evaluate_single_term(ansatz_circuit, term)
             
-        return p1_first
+            # initiate expectation values of Z\otimes Z, Z\otimes I and I\otimes Z
+            val=np.array([0,0,0,1], dtype=np.float64)
+            
+            for single_result in self._evaluate_single_term(ansatz_circuit, term):
+                # separate results for first and second qubit involved
+                r1, r2 = single_result
+                # update the expectation value of Z\otimes Z and the other operators
+                val[0] += (-1)**(r1+r2)
+                val[1] += (-1)**r2
+                val[2] += (-1)**r1
+            
+            val/=self._num_shots_evaluation
+            
+            expectation_value_mitigated += np.real(term.coefficient*np.dot(coeffs,val))
+            expectation_value_without += np.real(term.coefficient*val[0])
+            
+                
+                
+            
+        return (expectation_value_mitigated,expectation_value_without)
             
         
         
