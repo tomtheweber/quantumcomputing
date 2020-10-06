@@ -49,6 +49,7 @@ class TwoQubitMitigator:
         self._device=device
         self._num_shots_calibration=num_shots_calibration
         self._num_shots_evaluation=num_shots_evaluation
+        self._probabilities={}
         self._noisy_readout_probabilities=noisy_readout_probabilities
         
         
@@ -172,18 +173,21 @@ class TwoQubitMitigator:
 
     def expectation_value(self,
                           ansatz_circuit: Program,
-                          ) -> Tuple[float, float]:
+                          update_probabilities: bool = False
+                          ) -> Tuple[np.ndarray, float]:
         """Compute the mitigated as well as the non-mitigated expectation value of the operator on a given ansatz circuit.
         
         Args:
             ansatz_circuit: A Program representing the quantum state in which we want to evaluate the operator.
             
         Returns: 
-            A tuple of the mitigated and the non-mitigated expectation value.
+            A tuple of the mitigated and the non-mitigated expectation value, where the first one is a 4-dimensional
+            array containing all 4 terms of the mitigation procedure from https://arxiv.org/abs/2007.03663
         
         """
+        if not self._probabilities or update_probabilities:
         
-        probabilities=self.get_bit_flip_probabilities(True)
+            probabilities=self.update_bit_flip_probabilities(True)
         
         qubits=self.get_qubits()
         
@@ -205,8 +209,10 @@ class TwoQubitMitigator:
                          (gamma_I1*gamma_I2)/(gamma_Z1*gamma_Z2)])
         
         # create expectation values and set them to zero
-        expectation_value_mitigated=0.
-        expectation_value_without=0.
+        # expectation_values_mitigated is an array containing all 4 terms of the mitigation procedure.
+        values_mitigated=np.zeros((self._num_shots_evaluation,4))
+        expectation_value_mitigated=np.zeros((self._num_shots_evaluation,1))
+        expectation_value_without=np.zeros((self._num_shots_evaluation,1))
         
         
         
@@ -217,7 +223,7 @@ class TwoQubitMitigator:
             # initiate expectation values of Z\otimes Z, Z\otimes I and I\otimes Z
             val=np.array([0,0,0,1], dtype=np.float64)
             
-            for single_result in self._evaluate_single_term(ansatz_circuit, term):
+            for n,single_result in enumerate(self._evaluate_single_term(ansatz_circuit, term)):
                 # separate results for first and second qubit involved
                 r1, r2 = single_result
                 # update the expectation value of Z\otimes Z and the other operators
@@ -225,15 +231,15 @@ class TwoQubitMitigator:
                 val[1] += (-1)**r2
                 val[2] += (-1)**r1
             
-            val/=self._num_shots_evaluation
-            
-            expectation_value_mitigated += np.real(term.coefficient*np.dot(coeffs,val))
-            expectation_value_without += np.real(term.coefficient*val[0])
+
+                values_mitigated[n] += np.real(term.coefficient*np.multiply(coeffs,val)/(n+1))
+                expectation_value_mitigated[n] += np.real(term.coefficient*np.dot(coeffs, val)/(n+1))
+                expectation_value_without[n] += np.real(term.coefficient*val[0]/(n+1))
             
                 
                 
             
-        return (expectation_value_mitigated,expectation_value_without)
+        return (values_mitigated,expectation_value_mitigated,expectation_value_without)
             
         
         
@@ -249,7 +255,7 @@ class TwoQubitMitigator:
         
     
     
-    def get_bit_flip_probabilities(self,
+    def update_bit_flip_probabilities(self,
                                    allow_multi_qubit: bool = True
                                    ) -> Dict[str,float]:
         """Compute the bit-flip probabilities on the relevant qubits for the mitigation.
@@ -284,7 +290,7 @@ class TwoQubitMitigator:
                 
             
         else:
-            pass
+            raise KeyError('Right now, only multi-qubit calibration is possible.')
         
         
         return probabilities
@@ -309,7 +315,7 @@ class TwoQubitMitigator:
         """Run a Program a number of times and record the measurement results.
         
         Args:
-            circuit: A Program or a Python list of Program objects to be run and measured.
+            circuit: A Program to be run and measured.
             num_shots: An integer representing the number of times the quantum circuit is to be evaluated.
             
         Returns: A list of numpy arrays containing the readout of qubits from single measurements.
